@@ -1,4 +1,8 @@
-type bop = Add | Sub | Mult | Div | And | Or 
+type bop = Add | Sub | Mult | Div | And | Or | GT | LT | GEQ | LEQ | EQ
+
+type tuple_direction = 
+  | Left
+  | Right
 
 type expr = 
   | Int of int
@@ -7,13 +11,21 @@ type expr =
   | Binop of bop * expr * expr
   | IfThenElse of expr * expr * expr
   | Tuple of expr * expr
+  | Fst of expr
+  | Snd of expr
   | Let of expr * expr * expr
+  | Left of expr
+  | Right of expr
+
+(* TODO : Match statements on variant left/right *)
+(* TODO : Anonymous functions *)
 
 let rec is_value expr = 
   match expr with
   | Int _ | Bool _ -> true
   | Tuple (l, r) as t -> is_tuple_value t
-  | Binop _ | IfThenElse _ | Var _ | Let _ -> false
+  | Left e  | Right e -> is_value e
+  | Binop _ | IfThenElse _ | Var _ | Let _ | Fst _ | Snd _ -> false
 
 and is_tuple_value tuple = 
   match tuple with
@@ -64,6 +76,8 @@ let rec substitute v x e =
     Binop (bop, substitute v x e1, substitute v x e2)
   | Tuple (e1, e2) ->
     Tuple (substitute v x e1, substitute v x e2)
+  | Fst e1 -> Fst (substitute v x e1)
+  | Snd e1 -> Snd (substitute v x e1)
   | IfThenElse (e1, e2, e3) ->
     IfThenElse (substitute v x e1, substitute v x e2, substitute v x e3)
   | Let (var, e1, e2) ->
@@ -72,12 +86,16 @@ let rec substitute v x e =
       if var_name = x then Let (var, substitute v x e1, e2) (* shadowing case *)
       else Let (var, substitute v x e1, substitute v x e2)
     else failwith "Var is not a variable and so substition cannot occur"
+  | Left e1 -> Left (substitute v x e1)
+  | Right e1 -> Right (substitute v x e1)
 
 let same_type e1 e2 = 
   match e1, e2 with
   | Int i1, Int i2 -> true
   | Bool b1, Bool b2 -> true
   | Tuple (l1, r1), Tuple (l2, r2) -> true
+  | Left v1, Left v2 -> true
+  | Right v1, Right v2 -> true
   | _ -> false
 
 (** Requires: [expr] is not a value. *)
@@ -105,6 +123,12 @@ let rec step expr =
     Tuple (e1, step e2)
   | Tuple (e1, e2) -> 
     Tuple (step e1, e2)
+  | Fst e1 when is_value e1 -> 
+    step_fst e1
+  | Fst e1 -> Fst (step e1)
+  | Snd e1 when is_value e1 ->
+    step_snd e1
+  | Snd e1 -> Snd (step e1)
   | Let (e1, e2, e3) when not (is_var e1) ->
     failwith "Let expressions must contain a variable binding. "
   | Let (e1, e2, e3) when is_value e2 && is_value e3 ->
@@ -113,6 +137,12 @@ let rec step expr =
     Let (e1, e2, step e3) 
   | Let (e1, e2, e3) ->
     Let (e1, step e2, e3)
+  | Left e1 when is_value e1 ->
+    failwith "Precondition violated: cannot step value"
+  | Left e1 -> Left (step e1)
+  | Right e1 when is_value e1 ->
+    failwith "Precondition violated: cannot step value"
+  | Right e1 -> Right (step e1)
 
 and step_bop bop e1 e2 = 
   match bop, e1, e2 with
@@ -122,6 +152,12 @@ and step_bop bop e1 e2 =
   | Div, Int v1, Int v2 -> 
     if v2 = 0 then failwith "Division by 0 error"
     else Int (v1 / v2)
+  | EQ, Int v1, Int v2 -> Bool (v1 = v2)
+  | EQ, Bool b1, Bool b2 -> Bool (b1 = b2)
+  | LEQ, Int v1, Int v2 -> Bool (v1 <= v2)
+  | GEQ, Int v1, Int v2 -> Bool (v1 >= v2)
+  | LT, Int v1, Int v2 -> Bool (v1 < v2)
+  | GT, Int v1, Int v2 -> Bool (v1 > v2)
   | And, Bool b1, Bool b2 -> Bool (b1 && b2)
   | Or, Bool b1, Bool b2 -> Bool (b1 || b2)
   | _ -> failwith "operator value mismatch"
@@ -134,13 +170,23 @@ and step_if_then_else e1 e2 e3 =
   | Bool false ->
     if same_type e2 e3 then e3
     else failwith "If statement branches must have same type"
-  | Int _ | Binop _ | Tuple _-> failwith "Guard of if statement must be boolean"
+  | Int _ | Binop _ | Tuple _ | Left _ | Right _-> failwith "Guard of if statement must be boolean"
   | Var s -> failwith ("Unbound variable " ^ s)
-  | IfThenElse _ | Let _ -> failwith "Precondition Violation: e1 must be a value"
+  | IfThenElse _ | Let _ | Fst _ | Snd _  -> failwith "Precondition Violation: e1 must be a value"
 
 and step_let e1 e2 e3 = 
   if is_var e1 then substitute e2 (get_var e1) e3
   else failwith "Var is not a variable and so substition cannot occur"
+
+and step_fst e1 = 
+  match e1 with
+  | Tuple (l, r) -> l
+  | _ -> failwith "Precondition violated: expression must a tuple value"
+
+and step_snd e1 = 
+  match e1 with
+  | Tuple (l, r) -> r
+  | _ -> failwith "Precondition violated: expression must a tuple value"
 
 let rec eval expr = 
   if is_value expr then expr 
@@ -158,7 +204,7 @@ let parse s =
 
 let rec string_of_tuple t = 
   match t with
-  | Int _ | Bool _ | Binop _ | IfThenElse _ | Let _->
+  | Int _ | Bool _ | Binop _ | IfThenElse _ | Let _ | Fst _ | Snd _ | Right _  | Left _->
     failwith "Precondition violated: t must be a tuple. "
   | Var s -> failwith ("Unbound variable " ^ s)
   | Tuple (l, r) -> 
@@ -184,12 +230,14 @@ let rec string_of_tuple t =
       " , " ^ string_of_tuple (Tuple (l2, r2)) ^ ")"
     | _ -> failwith "Precondition violated: Tuples must contain values inside"
 
-let string_of_val e = 
+let rec string_of_val e = 
   match e with
   | Int i -> string_of_int i
   | Bool b -> string_of_bool b
   | Tuple (l, r) as t -> string_of_tuple t
-  | Binop _  | IfThenElse _ | Let _-> failwith "Incorrect evaluation"
+  | Left v -> "left of " ^ string_of_val v
+  | Right v -> "left of " ^ string_of_val v
+  | Binop _  | IfThenElse _ | Let _ | Fst _ | Snd _-> failwith "Incorrect evaluation"
   | Var s -> failwith ("Unbound variable " ^ s)
 
 let interpret s = 
