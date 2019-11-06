@@ -27,6 +27,52 @@ let is_var v =
   | Var _ -> true
   | _ -> false
 
+let get_var v = 
+  match v with
+  | Var str -> str
+  | _ -> failwith "Precondition violated: v must be a variable"
+
+
+(* substitution pattern should follow the basic rules: 
+   let x = e1 in e2
+   Eval e1 to v1 through big step
+   Now bind x to v1
+   Following that we can substitute v1 for all instances
+   of x in e2 via the substition rule e2{v1/x}
+
+
+                                          In general, substittion follows:
+                                          x -> v1
+                                          binop a, b -> binop a{v1/x} b{v1/x}
+                                          tuple a b -> tuple a{v1/x} b{v1/x}
+                                          ifthenelse a b c a{v1/x} b{v1/x} c{v1/x}
+                                          and:
+                                          let y (or any variable not x) = e3 in e4 - > let y = e3{v1/x} e4{v1/x}
+
+                                          Now wheres the exception: For substititon
+                                          We when e2 is itself a let expression, and 
+                                          we have let x (x shadows original x) = e3 in e4 - > let x = e3{v1/x} e4 (no substitition on e4 to maintain correct shadow pattern)
+
+                                        *)
+let rec substitute v x e = 
+  match e with
+  | Int _ | Bool _ -> failwith "e must have a variable binding in it. "
+  | Var name -> 
+    if name = x then v 
+    else Var name (* This case is probably not right *)
+  | Binop (bop, e1, e2) -> 
+    Binop (bop, substitute v x e1, substitute v x e2)
+  | Tuple (e1, e2) ->
+    Tuple (substitute v x e1, substitute v x e2)
+  | IfThenElse (e1, e2, e3) ->
+    IfThenElse (substitute v x e1, substitute v x e2, substitute v x e3)
+  | Let (var, e1, e2) ->
+    if is_var var then 
+      let var_name = get_var v in 
+      if var_name = x then Let (var, substitute v x e1, e2) (* shadowing case *)
+      else Let (var, substitute v x e1, substitute v x e2)
+    else failwith "Var is not a variable and so substition cannot occur"
+
 let same_type e1 e2 = 
   match e1, e2 with
   | Int i1, Int i2 -> true
@@ -59,6 +105,8 @@ let rec step expr =
     Tuple (e1, step e2)
   | Tuple (e1, e2) -> 
     Tuple (step e1, e2)
+  | Let (e1, e2, e3) when not (is_var e1) ->
+    failwith "Let expressions must contain a variable binding. "
   | Let (e1, e2, e3) when is_value e2 && is_value e3 ->
     step_let e1 e2 e3
   | Let (e1, e2, e3) when is_value e2 ->
@@ -91,7 +139,8 @@ and step_if_then_else e1 e2 e3 =
   | IfThenElse _ | Let _ -> failwith "Precondition Violation: e1 must be a value"
 
 and step_let e1 e2 e3 = 
-  failwith "Unimplemented"
+  if is_var e1 then substitute e2 (get_var e1) e3
+  else failwith "Var is not a variable and so substition cannot occur"
 
 let rec eval expr = 
   if is_value expr then expr 
