@@ -1,9 +1,12 @@
-type bop = Add | Sub | Mult | Div | And | Or | GT | LT | GEQ | LEQ | EQ
+type bop = Add | Sub | Mult | Div | And | Or | GT | LT | GEQ | LEQ | EQ | Mod 
+
+type unop = Neg | Pos | Abs | Not | Incr | Decr
 
 type expr = 
   | Int of int
   | Bool of bool
   | Var of string
+  | Unop of unop * expr
   | Binop of bop * expr * expr
   | IfThenElse of expr * expr * expr
   | Tuple of expr * expr
@@ -24,7 +27,7 @@ let rec is_value expr =
   | Int _ | Bool _  | Fun _ -> true
   | Tuple (l, r) as t -> is_tuple_value t
   | Left e  | Right e -> is_value e
-  | Binop _ | IfThenElse _ | Var _ | Let _ | Fst _ | Snd _  | MatchWith _ | Apply _-> false
+  | Binop _ | Unop _ | IfThenElse _ | Var _ | Let _ | Fst _ | Snd _  | MatchWith _ | Apply _-> false
 
 and is_tuple_value tuple = 
   match tuple with
@@ -50,6 +53,8 @@ let rec free_variables expr =
   | Var x -> [x]
   | Binop (binop, e1, e2) ->
     free_variables e1 @ free_variables e2
+  | Unop (unop, e1) ->
+    free_variables e1
   | Tuple (e1, e2) ->
     free_variables e1 @ free_variables e2
   | Fst e1 -> free_variables e1
@@ -99,6 +104,8 @@ let rec substitute v x e =
     else n (* This case is probably not right *)
   | Binop (bop, e1, e2) -> 
     Binop (bop, substitute v x e1, substitute v x e2)
+  | Unop (unop, e1) ->
+    Unop (unop, substitute v x e1)
   | Tuple (e1, e2) ->
     Tuple (substitute v x e1, substitute v x e2)
   | Fst e1 -> Fst (substitute v x e1)
@@ -149,6 +156,10 @@ let rec step expr =
     Binop (bop, e1, step e2)
   | Binop (bop, e1, e2) -> 
     Binop (bop, step e1, e2)
+  | Unop (unop, e1) when is_value e1 ->
+    step_unop unop e1
+  | Unop (unop, e1) ->
+    Unop (unop, step e1)
   | IfThenElse (e1, e2, e3) when not (is_value e1) ->
     IfThenElse (step e1, e2, e3)
   | IfThenElse (e1, e2, e3) when not (is_value e2) ->
@@ -208,7 +219,17 @@ and step_bop bop e1 e2 =
   | GT, Int v1, Int v2 -> Bool (v1 > v2)
   | And, Bool b1, Bool b2 -> Bool (b1 && b2)
   | Or, Bool b1, Bool b2 -> Bool (b1 || b2)
+  | Mod, Int v1, Int v2 -> Int (v1 mod v2)
   | _ -> failwith "operator value mismatch"
+
+and step_unop unop e1 = 
+  match unop, e1 with
+  | Neg, Int i -> Int (~- i)
+  | Pos, Int i | Abs, Int i -> Int (~+ i)
+  | Not, Bool b -> Bool (not b)
+  | Incr, Int i -> Int (i + 1)
+  | Decr, Int i -> Int (i - 1)
+  | _ -> failwith "Operator value mismatch"
 
 and step_if_then_else e1 e2 e3 = 
   match e1 with
@@ -222,10 +243,10 @@ and step_if_then_else e1 e2 e3 =
     if same_type e2 e3 then e3
       else failwith "If statement branches must have same type"*)
   (* I push back type checking into its own module, to parse the ast before interpreation*)
-  | Int _ | Binop _ | Tuple _ | Left _ | Right _ | Fun _ -> 
+  | Int _ | Tuple _ | Left _ | Right _ | Fun _ -> 
     failwith "Type Error : Guard of if statement must be boolean"
   | Var s -> failwith ("Unbound variable " ^ s)
-  | IfThenElse _ | Let _ | Fst _ | Snd _  | MatchWith _ | Apply _ ->
+  | Binop _| Unop _ | IfThenElse _ | Let _ | Fst _ | Snd _  | MatchWith _ | Apply _ ->
     failwith "Precondition Violation : e1 must be a value"
 
 and step_let e1 e2 e3 = 
@@ -271,7 +292,7 @@ let rec string_of_val e =
   | Left v -> "Left of (" ^ string_of_val v ^ ")"
   | Right v -> "Right of (" ^ string_of_val v ^ ")"
   | Fun (var, expr) -> "<SimCaml function>"
-  | Binop _  | IfThenElse _ | Let _ | Fst _ | Snd _ | MatchWith _ | Apply _ -> 
+  | Binop _ | Unop _ | IfThenElse _ | Let _ | Fst _ | Snd _ | MatchWith _ | Apply _-> 
     failwith "Precondition Violation : Incorrect evaluation"
   | Var s -> failwith ("Unbound variable " ^ s)
 
