@@ -2,9 +2,12 @@
    by Professor Michael Clarkson at Cornell University. It was not an
    assignment and was done for fun. *)
 
-type bop = Add | Sub | Mult | Div | And | Or | GT | LT | GEQ | LEQ | EQ | Mod | Exp | Rem 
+type bop = Add | Sub | Mult | Div | And | Or | GT | LT | GEQ | LEQ | EQ | Mod 
+         | Exp | Rem | Next | Mutate 
 
-type unop = Neg | Pos | Abs | Not | Incr | Decr | Int_to_Bool | Bool_to_Int | Rand_Int | Ignore
+type unop = Neg | Pos | Abs | Not | Incr | Decr | Int_to_Bool | Bool_to_Int 
+          | Ignore | DeRef | IncRef | DecRef | NotRef | Print_Bool | Print_Int
+          | Rand_Int
 
 type expr = 
   | Unit of unit
@@ -24,6 +27,8 @@ type expr =
   | Fun of expr * expr
   | Apply of expr * expr
   | Option of expr option
+  | IntRef of int ref
+  | BoolRef of bool ref 
 
 let gensym =
   let counter = ref 0 in
@@ -47,7 +52,7 @@ let rem a b =
 
 let rec is_value expr = 
   match expr with
-  | Int _ | Bool _  | Fun _ | Unit _-> true
+  | Int _ | Bool _  | Fun _ | Unit _ | IntRef _ | BoolRef _-> true
   | Tuple (l, r) as t -> is_tuple_value t
   | Left e  | Right e -> is_value e
   | Option None -> true
@@ -79,7 +84,7 @@ let get_var_name v =
 let rec replace var expr = 
   match expr with
   | Var _ -> var
-  | Unit _ | Int _ | Bool _ -> expr
+  | Unit _ | Int _ | Bool _ | IntRef _ | BoolRef _-> expr
   | Unop (unop, e) -> Unop (unop, replace var e)
   | Binop (bop, e1, e2) -> Binop (bop, replace var e1, replace var e2)
   | IfThenElse (e1, e2, e3) -> IfThenElse (replace var e1, replace var e2, replace var e3)
@@ -100,6 +105,8 @@ let rec free_variables expr =
   | Unit u -> []
   | Int i -> []
   | Bool b -> []
+  | IntRef _ -> []
+  | BoolRef _-> []
   | Var x -> [x]
   | Binop (binop, e1, e2) ->
     free_variables e1 @ free_variables e2
@@ -153,7 +160,7 @@ let rec free_variables expr =
                                         *)
 let rec substitute v x e = 
   match e with
-  | Int _ | Bool _ | Unit _-> failwith "e must have a variable binding in it. "
+  | Int _ | Bool _ | Unit _ | IntRef _ | BoolRef _-> failwith "e must have a variable binding in it. "
   | Var name as n -> 
     if n = x then v 
     else n (* This case is probably not right *)
@@ -212,7 +219,7 @@ let rec same_type e1 e2 =
 (** Requires: [expr] is not a value. *)
 let rec step expr = 
   match expr with
-  | Int _  | Bool _ | Unit _ | Fun _-> failwith "Precondition violated: cannot step value"
+  | Int _  | Bool _ | Unit _ | Fun _| IntRef _ | BoolRef _-> failwith "Precondition violated: cannot step value"
   | Var s -> failwith ("Unbound variable " ^ s)
   | Binop (bop, e1, e2) when is_value e1 && is_value e2 ->
     step_bop bop e1 e2
@@ -294,6 +301,10 @@ and step_bop bop e1 e2 =
   | Mod, Int v1, Int v2 -> Int (v1 mod v2)
   | Exp, Int v1, Int v2 -> Int (exp v1 v2 1)
   | Rem, Int v1, Int v2 -> Int (rem v1 v2)
+  | Next, Unit (), e2 -> e2
+  | Next, e1, e2 -> print_endline "Warning : e1 is not Unit "; e2
+  | Mutate, BoolRef b1, Bool b2 -> BoolRef (b1 := b2; b1)
+  | Mutate, IntRef i1, Int i2 -> IntRef (i1 := i2; i1)
   | _ -> failwith "operator value mismatch"
 
 and step_unop unop e1 = 
@@ -307,9 +318,15 @@ and step_unop unop e1 =
     if i <= 0 then Bool false else Bool true
   | Bool_to_Int, Bool b ->
     if b = true then Int 1 else Int 0
-  | Rand_Int, Unit _ -> 
-    Int (Random.int 10000000000)
   | Ignore, _ -> Unit ()
+  | DeRef, BoolRef b -> Bool (!b)
+  | DeRef, IntRef i -> Int (!i)
+  | IncRef, IntRef i -> IntRef (i := !i + 1; i)
+  | DecRef, IntRef i -> IntRef (i := !i - 1; i)
+  | NotRef, BoolRef b -> BoolRef (b := not !b ; b)
+  | Print_Int, Int i -> print_int i; Unit ()
+  | Print_Bool, Bool b -> b |> string_of_bool |> print_string; Unit ()
+  | Rand_Int, Int i -> Int (Random.int i)
   | _ -> failwith "Operator value mismatch"
 
 and step_if_then_else e1 e2 e3 = 
@@ -324,7 +341,7 @@ and step_if_then_else e1 e2 e3 =
     if same_type e2 e3 then e3
       else failwith "If statement branches must have same type"*)
   (* I push back type checking into its own module, to parse the ast before interpreation*)
-  | Int _ | Tuple _ | Left _ | Right _ | Fun _ | Unit _ | Option _-> 
+  | Int _ | Tuple _ | Left _ | Right _ | Fun _ | Unit _ | Option _ | IntRef _ | BoolRef _-> 
     failwith "Type Error : Guard of if statement must be boolean"
   | Var s -> failwith ("Unbound variable " ^ s)
   | Binop _| Unop _ | IfThenElse _ | Let _ | Fst _ | Snd _  | MatchWith _ | Apply _ ->
@@ -384,6 +401,8 @@ and string_of_val e =
   | Unit u -> "()"
   | Int i -> string_of_int i
   | Bool b -> string_of_bool b
+  | IntRef i -> "IntRef with value : " ^ string_of_int !i
+  | BoolRef b -> "BoolRef with value : " ^ string_of_bool !b
   | Tuple (l, r) -> "(" ^ string_of_val l ^ " , " ^ string_of_val r ^ ")"
   | Left v -> "Left of (" ^ string_of_val v ^ ")"
   | Right v -> "Right of (" ^ string_of_val v ^ ")"
