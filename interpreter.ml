@@ -1,8 +1,13 @@
-type bop = Add | Sub | Mult | Div | And | Or | GT | LT | GEQ | LEQ | EQ | Mod 
+(* This work is based fully and primarily on the textbook developed
+   by Professor Michael Clarkson at Cornell University. It was not an
+   assignment and was done for fun. *)
 
-type unop = Neg | Pos | Abs | Not | Incr | Decr
+type bop = Add | Sub | Mult | Div | And | Or | GT | LT | GEQ | LEQ | EQ | Mod | Exp | Rem 
+
+type unop = Neg | Pos | Abs | Not | Incr | Decr | Int_to_Bool | Bool_to_Int | Rand_Int | Ignore
 
 type expr = 
+  | Unit of unit
   | Int of int
   | Bool of bool
   | Var of string
@@ -16,15 +21,32 @@ type expr =
   | Left of expr
   | Right of expr
   | MatchWith of expr * expr * expr * expr * expr
-  | Fun of string * expr
+  | Fun of expr * expr
   | Apply of expr * expr
 
-(* TODO : Match statements on variant left/right *)
-(* TODO : Anonymous functions *)
+let gensym =
+  let counter = ref 0 in
+  fun () -> incr counter; "$x" ^ string_of_int !counter
+
+(* [exp a b acc] is [a^b] , or exponentiation. In SimCaml, exponentiation
+   is treated as a basic operation that a CPU can do, even though
+   exponentiation is not a basic ALU process. 
+   Tail recursive.
+   Not optimized to work in logarithmic time. *)
+let rec exp a b acc = 
+  match b with
+  | 0 -> a
+  | n when n < 0 -> 0 (* integer raised to one over power or higher is 0 in integer *)
+  | n ->
+    exp a (b - 1) (acc * a)
+
+(* [rem a b] is the remainder when [b] is divided by [a]. *)
+let rem a b = 
+  b - a * (b mod a)
 
 let rec is_value expr = 
   match expr with
-  | Int _ | Bool _  | Fun _ -> true
+  | Int _ | Bool _  | Fun _ | Unit _-> true
   | Tuple (l, r) as t -> is_tuple_value t
   | Left e  | Right e -> is_value e
   | Binop _ | Unop _ | IfThenElse _ | Var _ | Let _ | Fst _ | Snd _  | MatchWith _ | Apply _-> false
@@ -46,8 +68,26 @@ let get_var_name v =
   | Var s -> s
   | _ -> failwith "v was not a variable."
 
-let rec free_variables expr = 
+let rec replace var expr = 
   match expr with
+  | Var _ -> var
+  | Unit _ | Int _ | Bool _ -> expr
+  | Unop (unop, e) -> Unop (unop, replace var e)
+  | Binop (bop, e1, e2) -> Binop (bop, replace var e1, replace var e2)
+  | IfThenElse (e1, e2, e3) -> IfThenElse (replace var e1, replace var e2, replace var e3)
+  | Tuple (e1, e2) -> Tuple (replace var e1, replace var e2)
+  | Fst e1 -> Fst (replace var e1)
+  | Snd e1 -> Snd (replace var e1)
+  | Let (e1, e2, e3) -> Let (replace var e1, replace var e2, replace var e3)
+  | Left e1 -> Left (replace var e1)
+  | Right e1 -> Right (replace var e1)
+  | MatchWith (e1, s1, e2, s2, e3) -> MatchWith (replace var e1, replace var s1, replace var e2, replace var s2, replace var e3)
+  | Fun (e1, e2) -> Fun (replace var e1, replace var e2)
+  | Apply (e1, e2) -> Apply (replace var e1, replace var e2)
+
+let rec free_variables expr = 
+  match expr with 
+  | Unit u -> []
   | Int i -> []
   | Bool b -> []
   | Var x -> [x]
@@ -68,7 +108,10 @@ let rec free_variables expr =
   | Apply (e1, e2) -> 
     free_variables e1 @ free_variables e2
   | Fun (x, e) -> 
-    List.filter (fun elt -> elt <> x) (free_variables e)
+    let arg = (match x with
+        | Var s -> s
+        | _ -> failwith "function argument must be string") in
+    List.filter (fun elt -> elt <> arg) (free_variables e)
   | IfThenElse (e1, e2, e3) ->
     free_variables e1 @ free_variables e2 @ free_variables e3
   | Let (var, e1, e2) ->
@@ -98,7 +141,7 @@ let rec free_variables expr =
                                         *)
 let rec substitute v x e = 
   match e with
-  | Int _ | Bool _ -> failwith "e must have a variable binding in it. "
+  | Int _ | Bool _ | Unit _-> failwith "e must have a variable binding in it. "
   | Var name as n -> 
     if n = x then v 
     else n (* This case is probably not right *)
@@ -126,10 +169,17 @@ let rec substitute v x e =
     else if List.mem (get_var_name s2) free_vars then MatchWith (substitute v x e1, s1, e2, s2, substitute v x e3)
     else if List.mem (get_var_name s1) free_vars then MatchWith (substitute v x e1, s1, substitute v x e2, s2, e3)
     else MatchWith (substitute v x e1, s1, e2, s2, e3)
-  | Fun (var, e) ->
-    failwith "Unimplemented"
+  | Fun (var, e') ->
+    if x = var then Fun (var, e')
+    else 
+      let string_var = (match x with
+          | Var s -> s
+          | _ -> failwith "function argument must be string") in
+      if not (List.mem string_var (free_variables e')) then Fun (var, substitute v x e')
+      else let new_var = Var (gensym ()) in 
+        Fun (new_var, substitute v x (replace new_var e') )
   | Apply (e1, e2) ->
-    failwith "Unimplemented"
+    Apply (substitute v x e1, substitute v x e2)
 
 (* same type can be relagated to a type checker to do instead *)
 (*
@@ -148,7 +198,7 @@ let rec same_type e1 e2 =
 (** Requires: [expr] is not a value. *)
 let rec step expr = 
   match expr with
-  | Int _  | Bool _ -> failwith "Precondition violated: cannot step value"
+  | Int _  | Bool _ | Unit _ | Fun _-> failwith "Precondition violated: cannot step value"
   | Var s -> failwith ("Unbound variable " ^ s)
   | Binop (bop, e1, e2) when is_value e1 && is_value e2 ->
     step_bop bop e1 e2
@@ -198,10 +248,12 @@ let rec step expr =
     MatchWith (step e1, s1, e2, s2, e3)
   | MatchWith (e1, s1, e2, s2, e3) ->
     step_match_with e1 s1 e2 s2 e3
-  | Fun (var, e) ->
-    failwith "Unimplemented"
+  | Apply (e1, e2) when not (is_value e1)->
+    Apply (step e1, e2)
+  | Apply (e1, e2) when not (is_value e2) ->
+    Apply (e1, step e2)
   | Apply (e1, e2) ->
-    failwith "Unimplemented"
+    step_apply e1 e2
 
 and step_bop bop e1 e2 = 
   match bop, e1, e2 with
@@ -220,6 +272,8 @@ and step_bop bop e1 e2 =
   | And, Bool b1, Bool b2 -> Bool (b1 && b2)
   | Or, Bool b1, Bool b2 -> Bool (b1 || b2)
   | Mod, Int v1, Int v2 -> Int (v1 mod v2)
+  | Exp, Int v1, Int v2 -> Int (exp v1 v2 1)
+  | Rem, Int v1, Int v2 -> Int (rem v1 v2)
   | _ -> failwith "operator value mismatch"
 
 and step_unop unop e1 = 
@@ -229,6 +283,13 @@ and step_unop unop e1 =
   | Not, Bool b -> Bool (not b)
   | Incr, Int i -> Int (i + 1)
   | Decr, Int i -> Int (i - 1)
+  | Int_to_Bool, Int i -> 
+    if i <= 0 then Bool false else Bool true
+  | Bool_to_Int, Bool b ->
+    if b = true then Int 1 else Int 0
+  | Rand_Int, Unit _ -> 
+    Int (Random.int 10000000000)
+  | Ignore, _ -> Unit ()
   | _ -> failwith "Operator value mismatch"
 
 and step_if_then_else e1 e2 e3 = 
@@ -243,7 +304,7 @@ and step_if_then_else e1 e2 e3 =
     if same_type e2 e3 then e3
       else failwith "If statement branches must have same type"*)
   (* I push back type checking into its own module, to parse the ast before interpreation*)
-  | Int _ | Tuple _ | Left _ | Right _ | Fun _ -> 
+  | Int _ | Tuple _ | Left _ | Right _ | Fun _ | Unit _-> 
     failwith "Type Error : Guard of if statement must be boolean"
   | Var s -> failwith ("Unbound variable " ^ s)
   | Binop _| Unop _ | IfThenElse _ | Let _ | Fst _ | Snd _  | MatchWith _ | Apply _ ->
@@ -270,6 +331,11 @@ and step_match_with e1 s1 e2 s2 e3 =
   | _ -> 
     failwith "Match error: Match with can only match on left and right constructors. "
 
+and step_apply e1 e2 = 
+  match e1, e2 with
+  | Fun (arg, e), v2 -> substitute v2 arg e
+  | _ -> failwith "Application Error : Only functions can be applied to values. "
+
 let rec eval expr = 
   if is_value expr then expr 
   else expr |> step |> eval
@@ -286,6 +352,7 @@ let parse s =
 
 let rec string_of_val e = 
   match e with
+  | Unit u -> "()"
   | Int i -> string_of_int i
   | Bool b -> string_of_bool b
   | Tuple (l, r) -> "(" ^ string_of_val l ^ " , " ^ string_of_val r ^ ")"
