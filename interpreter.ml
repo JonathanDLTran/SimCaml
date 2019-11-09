@@ -23,6 +23,7 @@ type expr =
   | MatchWith of expr * expr * expr * expr * expr
   | Fun of expr * expr
   | Apply of expr * expr
+  | Option of expr option
 
 let gensym =
   let counter = ref 0 in
@@ -49,6 +50,8 @@ let rec is_value expr =
   | Int _ | Bool _  | Fun _ | Unit _-> true
   | Tuple (l, r) as t -> is_tuple_value t
   | Left e  | Right e -> is_value e
+  | Option None -> true
+  | Option e -> is_option_value e
   | Binop _ | Unop _ | IfThenElse _ | Var _ | Let _ | Fst _ | Snd _  | MatchWith _ | Apply _-> false
 
 and is_tuple_value tuple = 
@@ -57,6 +60,11 @@ and is_tuple_value tuple =
     if is_value e1 && is_value e2 then true
     else false
   | _ -> failwith "Precondition Violation : Must be tuple"
+
+and is_option_value option = 
+  match option with
+  | Some expr -> is_value expr
+  | None -> true
 
 let is_var v = 
   match v with
@@ -84,6 +92,8 @@ let rec replace var expr =
   | MatchWith (e1, s1, e2, s2, e3) -> MatchWith (replace var e1, replace var s1, replace var e2, replace var s2, replace var e3)
   | Fun (e1, e2) -> Fun (replace var e1, replace var e2)
   | Apply (e1, e2) -> Apply (replace var e1, replace var e2)
+  | Option None -> Option None
+  | Option Some e -> Option (Some (replace var e))
 
 let rec free_variables expr = 
   match expr with 
@@ -117,6 +127,8 @@ let rec free_variables expr =
   | Let (var, e1, e2) ->
     free_variables e1 @ 
     List.filter (fun elt -> elt <> get_var_name var) (free_variables e2)
+  | Option (Some e) -> free_variables e
+  | Option None -> []
 
 (* substitution pattern should follow the basic rules: 
    let x = e1 in e2
@@ -180,6 +192,8 @@ let rec substitute v x e =
         Fun (new_var, substitute v x (replace new_var e') )
   | Apply (e1, e2) ->
     Apply (substitute v x e1, substitute v x e2)
+  | Option None -> Option None
+  | Option (Some e1) -> Option (Some (substitute v x e1))
 
 (* same type can be relagated to a type checker to do instead *)
 (*
@@ -254,6 +268,12 @@ let rec step expr =
     Apply (e1, step e2)
   | Apply (e1, e2) ->
     step_apply e1 e2
+  | Option None  -> 
+    failwith "Precondition violated: cannot step value"
+  | Option Some e1 when is_value e1 -> 
+    failwith "Precondition violated: cannot step value"
+  | Option e1 ->
+    step_option e1 
 
 and step_bop bop e1 e2 = 
   match bop, e1, e2 with
@@ -304,7 +324,7 @@ and step_if_then_else e1 e2 e3 =
     if same_type e2 e3 then e3
       else failwith "If statement branches must have same type"*)
   (* I push back type checking into its own module, to parse the ast before interpreation*)
-  | Int _ | Tuple _ | Left _ | Right _ | Fun _ | Unit _-> 
+  | Int _ | Tuple _ | Left _ | Right _ | Fun _ | Unit _ | Option _-> 
     failwith "Type Error : Guard of if statement must be boolean"
   | Var s -> failwith ("Unbound variable " ^ s)
   | Binop _| Unop _ | IfThenElse _ | Let _ | Fst _ | Snd _  | MatchWith _ | Apply _ ->
@@ -336,6 +356,11 @@ and step_apply e1 e2 =
   | Fun (arg, e), v2 -> substitute v2 arg e
   | _ -> failwith "Application Error : Only functions can be applied to values. "
 
+and step_option e = 
+  match e with
+  | Some e' -> Option (Some (step e'))
+  | None -> failwith "Precondition violated : e cannot be a value"
+
 let rec eval expr = 
   if is_value expr then expr 
   else expr |> step |> eval
@@ -349,8 +374,12 @@ let parse s =
   let ast = Parser.prog Lexer.read lexbuf in
   ast
   *)
+let rec string_of_option e = 
+  match e with
+  | Some e -> "Some of ( " ^ string_of_val e ^ " )"
+  | None -> "None"
 
-let rec string_of_val e = 
+and string_of_val e = 
   match e with
   | Unit u -> "()"
   | Int i -> string_of_int i
@@ -359,6 +388,7 @@ let rec string_of_val e =
   | Left v -> "Left of (" ^ string_of_val v ^ ")"
   | Right v -> "Right of (" ^ string_of_val v ^ ")"
   | Fun (var, expr) -> "<SimCaml function>"
+  | Option e -> string_of_option e
   | Binop _ | Unop _ | IfThenElse _ | Let _ | Fst _ | Snd _ | MatchWith _ | Apply _-> 
     failwith "Precondition Violation : Incorrect evaluation"
   | Var s -> failwith ("Unbound variable " ^ s)
