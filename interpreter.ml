@@ -30,6 +30,15 @@ type expr =
   | IntRef of int ref
   | BoolRef of bool ref 
 
+type defn = 
+  | LetDef of expr * expr
+
+type phrase = 
+  | Defn of defn
+  | Expr of expr
+
+type program = phrase list
+
 let gensym =
   let counter = ref 0 in
   fun () -> incr counter; "$x" ^ string_of_int !counter
@@ -412,5 +421,20 @@ and string_of_val e =
     failwith "Precondition Violation : Incorrect evaluation"
   | Var s -> failwith ("Unbound variable " ^ s)
 
+let eval_def p = 
+  match p with
+  | LetDef (Var v, e) -> LetDef (Var v, eval e)
+  | LetDef _ -> failwith "Expression must be bound to variable. "
+
+let string_of_def p = 
+  match p with
+  | LetDef (_, v) -> string_of_val v
+
 let interpret s = 
   s |> parse |> eval |> string_of_val
+
+let rec interp_program program = 
+  match program with
+  | [] -> print_endline "EOF"
+  | (Defn d) :: t -> eval_def d |> string_of_def |> print_string; interp_program t
+  | (Expr e) :: t -> eval e |> string_of_val |> print_string; interp_program t
