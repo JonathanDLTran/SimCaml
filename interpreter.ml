@@ -3,7 +3,7 @@
    assignment and was done for fun. 
    
    By the way, this interpreter was never tested. Use at your own risk. If you are a recruiter
-   and want to see a working and polished interpreter, that includes full test cases,
+   and want to see a fully working and polished interpreter, that includes full test cases,
    please contact me at jdt98@cornell.edu. I cannot release that interpreter for 
    academic integrity reasons. *)
 
