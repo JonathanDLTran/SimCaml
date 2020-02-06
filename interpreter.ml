@@ -1,6 +1,11 @@
 (* This work is based fully and primarily on the textbook developed
    by Professor Michael Clarkson at Cornell University. It was not an
-   assignment and was done for fun. *)
+   assignment and was done for fun. 
+   
+   By the way, this interpreter was never tested. Use at your own risk. If you are a recruiter
+   and want to see a working and polished interpreter, that includes full test cases,
+   please contact me at jdt98@cornell.edu. I cannot release that interpreter for 
+   academic integrity reasons. *)
 
 type bop = Add | Sub | Mult | Div | And | Or | GT | LT | GEQ | LEQ | EQ | Mod 
          | Exp | Rem | Next | Mutate 
